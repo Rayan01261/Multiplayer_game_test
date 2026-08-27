@@ -83,6 +83,14 @@ def handle_disconnect():
     plr = plr -1
 
 
+@socketio.on('attack')
+def handle_attack():
+    bullet = {
+        'size':10,
+        'color':'#FF0000'
+    }
+    
+
 
 
 @socketio.on('move_up')
@@ -121,6 +129,7 @@ def handle_move_up(data):
         }
         jogadores.get(request.sid)['pickup'] = 1
         emit('pickup_dispawn',{'pickup':pickup}, broadcast=True)
+        emit('equip_weapon',{'sid':request.sid})
         print("Jogador pegou o objeto")
 
     jogadores.get(request.sid)['pos_y'] = nova_pos_y

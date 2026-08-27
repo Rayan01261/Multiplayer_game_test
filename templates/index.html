@@ -39,7 +39,10 @@ let players = {
 // Segundo quadrado (movimento ainda não definido)
 
 //Pare agora
-
+let mouse = {
+  x : 0,
+  y : 0
+}
 
 let pick_up_obj = {
   x: null,
@@ -66,6 +69,21 @@ window.addEventListener("keyup", (e) => {
   if (key in keys) keys[key] = false;
 });
 
+window.addEventListener('mousemove', (e) => {
+    rect = canvas.getBoundingClientRect()
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+})
+
+window.addEventListener('click' , (e) => {
+  socket.emit('attack')
+})
+
+
+function anguloEntreArmaEMouse(mouse_x,mouse_y,arma_x,arma_y){
+  return Math.atan2(mouse_y-arma_y, mouse_x-arma_x)
+}
+
 function updatePlayer() {
   if (keys.w) socket.emit('move_up', {'speed':SPEED});
   if (keys.s) socket.emit('move_down', {'speed':SPEED});
@@ -76,6 +94,8 @@ function updatePlayer() {
 
 }
 
+
+
 function draw_rect() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -84,7 +104,7 @@ function draw_rect() {
       ctx.fillStyle = jogador.color;
       ctx.fillRect(jogador.pos_x, jogador.pos_y, jogador.size, jogador.size);
     }
-    console.log(jogador.x,jogador.y)
+
   }
 
 }
@@ -97,12 +117,26 @@ function draw_pickup_obj(){
   
 }
 
+function render_weapon(){
+  for (const [sid, jogador] of Object.entries(players)) {
+    if(jogador.pickup == 1){
+      ctx.fillStyle = '#000000';
+      ctx.save()
+      ctx.translate(jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2)
+      ctx.rotate(anguloEntreArmaEMouse(mouse.x,mouse.y,jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2))
+      ctx.fillRect(0, -30/2, 30, 10)
+      ctx.restore()
+    }
 
+  }
+
+}
 
 function loop() {
   updatePlayer();
   draw_rect();
   draw_pickup_obj();
+  render_weapon();
   requestAnimationFrame(loop);
 }
 
