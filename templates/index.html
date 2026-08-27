@@ -32,20 +32,21 @@ const SIZE = 40;
 const SPEED = 4;
 
 // Quadrado controlado por WASD
-const player = {
-  x: null,
-  y: null,
-  size: SIZE,
-  color: "#3498db"
+let players = {
+  
 };
 
 // Segundo quadrado (movimento ainda não definido)
-const other = {
+
+//Pare agora
+
+
+let pick_up_obj = {
   x: null,
   y: null,
-  size: SIZE,
-  color: "#e74c3c"
-};
+  size: 10,
+  color: "#ff69b4"
+}
 
 // Estado das teclas pressionadas
 const keys = {
@@ -72,30 +73,36 @@ function updatePlayer() {
   if (keys.d) socket.emit('move_right', {'speed':SPEED});
 
 
-  // Limita o quadrado às bordas do canvas
-  player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
-  player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
 
-}
-
-function updateOther() {
-  // TODO: definir como este quadrado se move
 }
 
 function draw_rect() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = player.color;
-  ctx.fillRect(player.x, player.y, player.size, player.size);
+  for (const [sid, jogador] of Object.entries(players)) {
+    if(jogador.alive){
+      ctx.fillStyle = jogador.color;
+      ctx.fillRect(jogador.pos_x, jogador.pos_y, jogador.size, jogador.size);
+    }
+    console.log(jogador.x,jogador.y)
+  }
 
-  ctx.fillStyle = other.color;
-  ctx.fillRect(other.x, other.y, other.size, other.size);
 }
+
+function draw_pickup_obj(){
+  if(pick_up_obj.x != null){
+    ctx.fillStyle = pick_up_obj.color;
+    ctx.fillRect(pick_up_obj.x, pick_up_obj.y, pick_up_obj.size, pick_up_obj.size);
+  }
+  
+}
+
+
 
 function loop() {
   updatePlayer();
-  updateOther();
   draw_rect();
+  draw_pickup_obj();
   requestAnimationFrame(loop);
 }
 
@@ -109,16 +116,20 @@ socket.on('connect', () => {
 loop();
 
 socket.on('update_player_pos', (data) => {
-  const jogador = data.jogador;
+  players = data.jogadores;
 
-  if (jogador.plr == 0) {
-    player.x = jogador.pos_x;
-    player.y = jogador.pos_y;
-  } else if (jogador.plr == 1) {
-    other.x = jogador.pos_x;
-    other.y = jogador.pos_y;
-  }
 });
+
+socket.on('spawn_pickup', (data) => {
+  const pickup = data
+  pick_up_obj.x = pickup.pos_x
+  pick_up_obj.y = pickup.pos_y
+})
+
+socket.on('pickup_dispawn', (data) => {
+  pick_up_obj = data.pickup
+  console.log('Objeto dispawnou')
+})
 </script>
 
 </body>
