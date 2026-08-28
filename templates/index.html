@@ -30,14 +30,19 @@ const ctx = canvas.getContext("2d");
 
 const SIZE = 40;
 const SPEED = 4;
+const BULLET_SPEED = 80;
 
 // Quadrado controlado por WASD
 let players = {
   
 };
 
-// Segundo quadrado (movimento ainda não definido)
+let mapa = {
+  
+}
 
+// Segundo quadrado (movimento ainda não definido)
+let meuSid;
 //Pare agora
 let mouse = {
   x : 0,
@@ -49,6 +54,11 @@ let pick_up_obj = {
   y: null,
   size: 10,
   color: "#ff69b4"
+}
+
+let bullets = {
+
+
 }
 
 // Estado das teclas pressionadas
@@ -76,7 +86,10 @@ window.addEventListener('mousemove', (e) => {
 })
 
 window.addEventListener('click' , (e) => {
-  socket.emit('attack')
+
+  velocidades_angulo = anguloEntreArmaEMouse(mouse.x,mouse.y,players[meuSid].pos_x,players[meuSid].pos_y)
+  velocidades = anguloDaBala(velocidades_angulo)
+  socket.emit('attack', {"vel_x":velocidades.vel_x,"vel_y":velocidades.vel_y,"pos_x":players[meuSid].pos_x,"pos_y":players[meuSid].pos_y,'angulo':velocidades_angulo})
 })
 
 
@@ -94,6 +107,11 @@ function updatePlayer() {
 
 }
 
+function anguloDaBala(angulo){
+  vel_x = Math.cos(angulo) * 13
+  vel_y = Math.sin(angulo) * 13
+  return {vel_x, vel_y}
+}
 
 
 function draw_rect() {
@@ -107,6 +125,13 @@ function draw_rect() {
 
   }
 
+}
+
+function draw_map_tile(){
+  for (const [id, tile] of Object.entries(mapa)) {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(tile.pos_x,tile.pos_y,40,40);
+  }
 }
 
 function draw_pickup_obj(){
@@ -123,7 +148,7 @@ function render_weapon(){
       ctx.fillStyle = '#000000';
       ctx.save()
       ctx.translate(jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2)
-      ctx.rotate(anguloEntreArmaEMouse(mouse.x,mouse.y,jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2))
+      ctx.rotate(anguloEntreArmaEMouse(jogador.mouse_x,jogador.mouse_y,jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2))
       ctx.fillRect(0, -30/2, 30, 10)
       ctx.restore()
     }
@@ -131,13 +156,35 @@ function render_weapon(){
   }
 
 }
+function render_bullet(){
+  for (const [id, bullet] of Object.entries(bullets)) {
+    if(bullet.alive){
+      ctx.fillStyle = '#FF0000';
+      ctx.save()
+      ctx.translate(bullet.pos_x, bullet.pos_y)
+      ctx.rotate(bullet.angulo)
+      ctx.fillRect(0, -5, 10, 10)
+      ctx.restore()
+    }
+
+  }
+
+}
+
+function send_mouse(){
+  socket.emit('send_mouse',{'mouse_x':mouse.x,'mouse_y':mouse.y})
+}
 
 function loop() {
   updatePlayer();
   draw_rect();
   draw_pickup_obj();
   render_weapon();
+  render_bullet();
+  send_mouse();
+  draw_map_tile()
   requestAnimationFrame(loop);
+  
 }
 
 //listners de socket
@@ -164,6 +211,16 @@ socket.on('pickup_dispawn', (data) => {
   pick_up_obj = data.pickup
   console.log('Objeto dispawnou')
 })
+
+socket.on('spawn_bullets', (data) => {
+  bullets = data.bullets
+})
+
+socket.on('recebe_mapa', (data) => {
+  mapa = data.paredes
+})
+
+
 </script>
 
 </body>
