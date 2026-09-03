@@ -8,21 +8,98 @@
   html, body {
     margin: 0;
     padding: 0;
-    background: #1e1e1e;
+    height: 100%;
+    background: radial-gradient(circle at 50% 0%, #262a35 0%, #14161c 65%, #0c0d11 100%);
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  body {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    gap: 14px;
+    min-height: 100vh;
+  }
+  #game-wrap {
+    position: relative;
+    border-radius: 14px;
+    padding: 10px;
+    background: linear-gradient(160deg, #3a3f4d, #1a1c22);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 20px 45px rgba(0,0,0,0.55);
   }
   canvas {
-    background: #ffffff;
-    border: 2px solid #444;
+    display: block;
+    background: #eef1f5;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,0.25);
+  }
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #controls button {
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: #eef1f5;
+    background: linear-gradient(180deg, #4a5164, #33384410);
+    background-color: #3a3f4d;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.08s ease, background-color 0.15s ease;
+  }
+  #controls button:hover {
+    background-color: #4a5164;
+  }
+  #controls button:active {
+    transform: translateY(1px);
+  }
+  #status-jogo {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: #ffd35c;
+    background-color: #3a3f4d;
+    border: 1px solid rgba(255, 211, 92, 0.3);
+    border-radius: 8px;
+  }
+  #status-jogo.ativo {
+    display: inline-flex;
+  }
+  #status-jogo .ponto {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5ddc6b;
+    box-shadow: 0 0 6px #5ddc6b;
+    animation: piscar 1.1s ease-in-out infinite;
+  }
+  @keyframes piscar {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.75); }
   }
 </style>
 </head>
 <body>
 
-<canvas id="canvas" width="800" height="600"></canvas>
+<div id="game-wrap">
+  <canvas id="canvas" width="1280" height="720"></canvas>
+</div>
+
+<div id="controls">
+  <button id="btn-start" onclick="StartGame()">Start Game</button>
+  <span id="status-jogo"><span class="ponto"></span> Jogo em andamento</span>
+  <button onclick="Respawn()">Respawn</button>
+  <input id="nick_text_field" type="text">
+  <button onclick="ChangeName(document.getElementById('nick_text_field').value)">Change Name</button>
+</div>
 
 <script>
 const canvas = document.getElementById("canvas");
@@ -30,9 +107,29 @@ const ctx = canvas.getContext("2d");
 
 const SIZE = 40;
 const SPEED = 4;
-const BULLET_SPEED = 80;
+const BULLET_SPEED = 160;
+let swings = {};
+const FPS_ALVO = 60;
+const INTERVALO_MS = 1000 / FPS_ALVO;
 
-// Quadrado controlado por WASD
+let kamehamehas = {};
+const KAMEHAMEHA_DURATION_MS = 5000;
+
+
+let ultimoKamehamehaTime = 0;
+const KAMEHAMEHA_COOLDOWN_MS = 6000;
+
+let ultimoFrameTime = 0;
+const MELEE_SWING_DURATION_MS = 250;
+const MELEE_ARC_WIDTH = Math.PI
+
+let hpAnterior = {};
+let killstreakAnterior = {};
+
+let end_game = false;
+
+let game_start = false;
+
 let players = {
   
 };
@@ -41,6 +138,8 @@ let mapa = {
   
 }
 
+let fallbackNames = {};
+
 // Segundo quadrado (movimento ainda não definido)
 let meuSid;
 //Pare agora
@@ -48,6 +147,8 @@ let mouse = {
   x : 0,
   y : 0
 }
+
+let pickups = []
 
 let pick_up_obj = {
   x: null,
@@ -61,12 +162,267 @@ let bullets = {
 
 }
 
+let killFeed = [];
+
+
+let multiKillCard = null;
+
+const streakLabels = {
+  2: "Double Kill",
+  3: "Triple Kill",
+  4: "Multi Kill",
+  5: "Monster Kill"
+};
+
+function draw_scoreboard(){
+  const entradas = Object.entries(players).filter(([sid, j]) => j.nickname !== undefined || true);
+  if(entradas.length === 0) return;
+
+  const linhaAltura = 22;
+  const largura = 190;
+  const x = 16;
+  let y = 16;
+
+  ctx.save();
+  ctx.font = "bold 12px 'Segoe UI', system-ui, sans-serif";
+
+  // fundo do painel
+  const altura = 26 + entradas.length * linhaAltura;
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  roundRectPath(x, y, largura, altura, 8);
+  ctx.fill();
+
+  // cabeçalho
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.textAlign = "left";
+  ctx.fillText("JOGADOR", x + 10, y + 16);
+  ctx.textAlign = "right";
+  ctx.fillText("K/D", x + largura - 10, y + 16);
+
+  y += 24;
+
+  entradas
+    .sort((a, b) => (b[1].kills ?? 0) - (a[1].kills ?? 0))
+    .forEach(([sid, jogador]) => {
+      const isMe = sid === meuSid;
+      const nome = getDisplayName(sid, jogador);
+      const kd = `${jogador.kills ?? 0}/${jogador.death ?? 0}`;
+
+      if(isMe){
+        ctx.fillStyle = "rgba(255,211,92,0.15)";
+        roundRectPath(x + 2, y - 14, largura - 4, linhaAltura - 2, 4);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = isMe ? "#ffd35c" : "#ffffff";
+      ctx.textAlign = "left";
+      let nomeExibido = nome.length > 14 ? nome.slice(0, 13) + "…" : nome;
+      ctx.fillText(nomeExibido, x + 10, y);
+
+      ctx.textAlign = "right";
+      ctx.fillText(kd, x + largura - 10, y);
+
+      y += linhaAltura;
+    });
+
+  ctx.restore();
+}
+
+let winnerName = null;
+
+function draw_end_game_screen(){
+  if(!end_game) return;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 20px 'Segoe UI', system-ui, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.fillText("FIM DE JOGO", canvas.width/2, canvas.height/2 - 60);
+
+  ctx.font = "bold 48px 'Segoe UI', system-ui, sans-serif";
+  const grad = ctx.createLinearGradient(canvas.width/2 - 200, 0, canvas.width/2 + 200, 0);
+  grad.addColorStop(0, "#ffdf7e");
+  grad.addColorStop(0.5, "#fff6d8");
+  grad.addColorStop(1, "#ffdf7e");
+  ctx.fillStyle = grad;
+
+  const texto = winnerName ? `${winnerName} venceu!` : "Sem vencedor";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.strokeText(texto, canvas.width/2, canvas.height/2);
+  ctx.fillText(texto, canvas.width/2, canvas.height/2);
+
+  ctx.font = "16px 'Segoe UI', system-ui, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fillText("Clique em Start Game para jogar novamente", canvas.width/2, canvas.height/2 + 60);
+
+  ctx.restore();
+}
+
+function falar(texto){
+  if(!window.speechSynthesis) return;
+  const utter = new SpeechSynthesisUtterance(texto);
+  utter.lang = "en-US";
+  utter.pitch = 0.8;
+  utter.volume = 1;
+  speechSynthesis.speak(utter);
+}
+
+
+function draw_multikill_card(){
+  if(!multiKillCard) return;
+  const age = Date.now() - multiKillCard.time;
+  const DURATION = 2200;
+  if(age > DURATION){ multiKillCard = null; return; }
+
+  const t = age / DURATION;
+  let alpha = t < 0.15 ? t/0.15 : (t > 0.75 ? 1 - (t-0.75)/0.25 : 1);
+  const scale = t < 0.15 ? 0.8 + 0.2*(t/0.15) : 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(canvas.width/2, 70);
+  ctx.scale(scale, scale);
+  ctx.font = "bold 30px 'Segoe UI', system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(0,0,0,0.7)";
+  ctx.strokeText(multiKillCard.text, 0, 0);
+
+  const grad = ctx.createLinearGradient(-150,0,150,0);
+  grad.addColorStop(0,"#ffdf7e");
+  grad.addColorStop(0.5,"#fff6d8");
+  grad.addColorStop(1,"#ffdf7e");
+  ctx.fillStyle = grad;
+  ctx.fillText(multiKillCard.text, 0, 0);
+  ctx.restore();
+}
+
 // Estado das teclas pressionadas
 const keys = {
   w: false,
   a: false,
   s: false,
   d: false
+};
+
+let particles = [];
+
+function spawnParticles(x, y, color, count=14, config={}){
+  const { speed=3, life=500, size=3 } = config;
+  for(let i=0;i<count;i++){
+    const angulo = Math.random()*Math.PI*2;
+    const vel = speed * (0.4 + Math.random()*0.6);
+    particles.push({
+      x, y,
+      vx: Math.cos(angulo)*vel,
+      vy: Math.sin(angulo)*vel,
+      life, maxLife: life,
+      size: size * (0.6+Math.random()*0.8),
+      color
+    });
+  }
+}
+
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.94;
+    p.vy *= 0.94;
+    p.life -= dt;
+    if(p.life <= 0) particles.splice(i,1);
+  }
+}
+
+function draw_particles(){
+  for(const p of particles){
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+let shakeUntil = 0;
+let shakeMagnitude = 0;
+
+function triggerShake(magnitude, durationMs){
+  shakeMagnitude = magnitude;
+  shakeUntil = Date.now() + durationMs;
+}
+
+function getShakeOffset(){
+  const now = Date.now();
+  if(now >= shakeUntil) return {x:0, y:0};
+  const falloff = (shakeUntil - now) / 300;
+  return {
+    x: (Math.random()*2-1) * shakeMagnitude * falloff,
+    y: (Math.random()*2-1) * shakeMagnitude * falloff
+  };
+}
+
+function draw_vignette(){
+  const me = players[meuSid];
+  if(!me || !me.alive) return;
+
+  const pct = Math.max(0, Math.min(1, me.hp / 20));
+  if(pct > 0.35) return;
+
+  const intensidade = 1 - (pct / 0.35);
+  const pulso = 0.75 + Math.sin(Date.now()/200) * 0.25;
+  const alpha = 0.55 * intensidade * pulso;
+
+  ctx.save();
+  const grad = ctx.createRadialGradient(
+    canvas.width/2, canvas.height/2, canvas.height*0.35,
+    canvas.width/2, canvas.height/2, canvas.height*0.75
+  );
+  grad.addColorStop(0, "rgba(180,0,0,0)");
+  grad.addColorStop(1, `rgba(180,0,0,${alpha})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.restore();
+}
+
+// ---- Motor de som (Web Audio API, sem arquivos externos) ----
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function tocarBeep({freq = 440, duracao = 0.1, tipo = 'sine', volume = 0.2, freqFinal = null}) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = tipo;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (freqFinal !== null) {
+    osc.frequency.exponentialRampToValueAtTime(freqFinal, audioCtx.currentTime + duracao);
+  }
+
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duracao);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duracao);
+}
+
+const sons = {
+  tiro: () => tocarBeep({freq: 900, freqFinal: 300, duracao: 0.08, tipo: 'square', volume: 0.15}),
+  dano: () => tocarBeep({freq: 180, freqFinal: 80, duracao: 0.15, tipo: 'sawtooth', volume: 0.25}),
+  pickup: () => tocarBeep({freq: 500, freqFinal: 1000, duracao: 0.15, tipo: 'sine', volume: 0.2}),
+  morte: () => tocarBeep({freq: 400, freqFinal: 60, duracao: 0.4, tipo: 'sawtooth', volume: 0.3}),
 };
 
 window.addEventListener("keydown", (e) => {
@@ -85,16 +441,79 @@ window.addEventListener('mousemove', (e) => {
     mouse.y = e.clientY - rect.top;
 })
 
-window.addEventListener('click' , (e) => {
+let ultimoSwingTime = 0;
+const MELEE_COOLDOWN_MS = 5000;
 
-  velocidades_angulo = anguloEntreArmaEMouse(mouse.x,mouse.y,players[meuSid].pos_x,players[meuSid].pos_y)
+window.addEventListener('click' , (e) => {
+  let centro_x = players[meuSid].pos_x+ 40/2
+  let centro_y = players[meuSid].pos_y + 40/2
+  velocidades_angulo = anguloEntreArmaEMouse(mouse.x,mouse.y,centro_x,centro_y)
   velocidades = anguloDaBala(velocidades_angulo)
-  socket.emit('attack', {"vel_x":velocidades.vel_x,"vel_y":velocidades.vel_y,"pos_x":players[meuSid].pos_x,"pos_y":players[meuSid].pos_y,'angulo':velocidades_angulo})
+
+  if(players[meuSid].pickup==1){
+    sons.tiro()
+    socket.emit('attack', {"vel_x":velocidades.vel_x*2,"vel_y":velocidades.vel_y*2,"pos_x":centro_x + Math.cos(velocidades_angulo)*30 ,"pos_y":centro_y + Math.sin(velocidades_angulo)*30,'angulo':velocidades_angulo})
+  }
+
+  if(players[meuSid].pickup==4){
+    const agora = Date.now();
+    if(agora - ultimoSwingTime < MELEE_COOLDOWN_MS){
+      return;
+    }
+    ultimoSwingTime = agora;
+
+    swings[meuSid] = { startTime: agora, angulo: velocidades_angulo };
+
+    sons.tiro()
+    socket.emit('melee', {"pos_x":centro_x + Math.cos(velocidades_angulo)*30 ,"pos_y":centro_y + Math.sin(velocidades_angulo)*30,'angulo':velocidades_angulo})
+  }
+  if(players[meuSid].pickup==100){
+    const agora = Date.now();
+    if(agora - ultimoKamehamehaTime < KAMEHAMEHA_COOLDOWN_MS){
+      return;
+    }
+    ultimoKamehamehaTime = agora;
+
+    sons.tiro()
+    socket.emit('kamehameha', {"pos_x":centro_x + Math.cos(velocidades_angulo)*30 ,"pos_y":centro_y + Math.sin(velocidades_angulo)*30,'angulo':velocidades_angulo})
+  }
 })
 
 
 function anguloEntreArmaEMouse(mouse_x,mouse_y,arma_x,arma_y){
   return Math.atan2(mouse_y-arma_y, mouse_x-arma_x)
+}
+
+function getDisplayName(sid, jogador){
+  if(jogador.nickname && jogador.nickname.trim() !== ""){
+    return jogador.nickname;
+  }
+  if(!fallbackNames[sid]){
+    fallbackNames[sid] = "Player" + Math.floor(Math.random() * 10000);
+  }
+  return fallbackNames[sid];
+}
+
+function draw_nickname(sid, jogador){
+  const s = jogador.size;
+  const name = getDisplayName(sid, jogador);
+
+  ctx.save();
+  ctx.font = "bold 12px 'Segoe UI', system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+
+  const x = jogador.pos_x + s / 2;
+  const y = jogador.pos_y - 22; // um pouco acima da barra de vida (que fica em pos_y - 14)
+
+  // contorno escuro pra legibilidade em qualquer fundo
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.strokeText(name, x, y);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(name, x, y);
+  ctx.restore();
 }
 
 function updatePlayer() {
@@ -113,57 +532,562 @@ function anguloDaBala(angulo){
   return {vel_x, vel_y}
 }
 
+function ChangeName(name){
+  console.log(name)
+  socket.emit('change_name',{'name':name})
+}
+
+
+function draw_background(){
+  // fundo levemente quadriculado, só pra dar profundidade ao chão
+  const grid = 40;
+  ctx.fillStyle = "#eef1f5";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "rgba(0,0,0,0.045)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= canvas.width; x += grid) {
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += grid) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(canvas.width, y + 0.5);
+    ctx.stroke();
+  }
+}
+
+function roundRectPath(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
 function draw_rect() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  //ctx.clearRect(0, 0, canvas.width, canvas.height);
+  draw_background();
 
   for (const [sid, jogador] of Object.entries(players)) {
     if(jogador.alive){
-      ctx.fillStyle = jogador.color;
-      ctx.fillRect(jogador.pos_x, jogador.pos_y, jogador.size, jogador.size);
+      const isMe = sid === meuSid;
+      const s = jogador.size;
+
+      // sombra suave embaixo do jogador
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(jogador.pos_x + s/2, jogador.pos_y + s + 4, s*0.4, s*0.16, 0, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(0,0,0,0.18)";
+      ctx.fill();
+      ctx.restore();
+
+      // corpo do jogador com bordas arredondadas e leve gradiente
+      const grad = ctx.createLinearGradient(jogador.pos_x, jogador.pos_y, jogador.pos_x, jogador.pos_y + s);
+      grad.addColorStop(0, lightenColor(jogador.color, 18));
+      grad.addColorStop(1, jogador.color);
+
+      ctx.save();
+      roundRectPath(jogador.pos_x, jogador.pos_y, s, s, 8);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.lineWidth = isMe ? 3 : 2;
+      ctx.strokeStyle = isMe ? "#ffd35c" : "rgba(0,0,0,0.35)";
+      ctx.stroke();
+      ctx.restore();
+      if(jogador.pickup == 100) draw_saiyan_hair(jogador);
+      draw_hp_bar(jogador);
+      draw_nickname(sid, jogador);
     }
 
   }
 
 }
 
+function lightenColor(hex, percent){
+  // aceita cores tipo "#rrggbb"; se não for hex, devolve a original
+  if(typeof hex !== "string" || hex[0] !== "#" || hex.length !== 7) return hex;
+  const num = parseInt(hex.slice(1), 16);
+  let r = (num >> 16) + Math.round(255 * (percent/100));
+  let g = ((num >> 8) & 0x00FF) + Math.round(255 * (percent/100));
+  let b = (num & 0x0000FF) + Math.round(255 * (percent/100));
+  r = Math.min(255, Math.max(0, r));
+  g = Math.min(255, Math.max(0, g));
+  b = Math.min(255, Math.max(0, b));
+  return "#" + (0x1000000 + r*0x10000 + g*0x100 + b).toString(16).slice(1);
+}
+
+function draw_hp_bar(jogador){
+  const hpMax = (jogador.maxHp ?? jogador.hp_max ?? 20);
+  const hpAtual = Math.max(0, Math.min(hpMax, (jogador.hp ?? jogador.vida ?? hpMax)));
+  const pct = hpMax > 0 ? hpAtual / hpMax : 0;
+
+  const barW = jogador.size + 10;
+  const barH = 6;
+  const x = jogador.pos_x + jogador.size/2 - barW/2;
+  const y = jogador.pos_y - 14;
+
+  // fundo da barra
+  ctx.save();
+  roundRectPath(x, y, barW, barH, 3);
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fill();
+
+  // preenchimento colorido conforme a vida (verde -> amarelo -> vermelho)
+  const fillW = Math.max(0, barW - 2) * pct;
+  if(fillW > 0){
+    let cor;
+    if(pct > 0.5) cor = "#5ddc6b";
+    else if(pct > 0.25) cor = "#f2c14e";
+    else cor = "#e6564c";
+    roundRectPath(x + 1, y + 1, fillW, barH - 2, 2);
+    ctx.fillStyle = cor;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function draw_map_tile(){
   for (const [id, tile] of Object.entries(mapa)) {
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(tile.pos_x,tile.pos_y,40,40);
+    ctx.save();
+    roundRectPath(tile.pos_x, tile.pos_y, 40, 40, 5);
+    const grad = ctx.createLinearGradient(tile.pos_x, tile.pos_y, tile.pos_x, tile.pos_y + 40);
+    grad.addColorStop(0, "#3c3f45");
+    grad.addColorStop(1, "#202226");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
 function draw_pickup_obj(){
-  if(pick_up_obj.x != null){
-    ctx.fillStyle = pick_up_obj.color;
-    ctx.fillRect(pick_up_obj.x, pick_up_obj.y, pick_up_obj.size, pick_up_obj.size);
+  for ( const pick_up_obj of pickups){
+    if(pick_up_obj.pos_x != null){
+      const cx = pick_up_obj.pos_x + 10/2;
+      const cy = pick_up_obj.pos_y + 10/2;
+      const pulse = 4 + Math.sin(Date.now() / 200) * 2;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10/1.4 + pulse, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(255,105,180,0.25)";
+      ctx.fill();
+      roundRectPath(pick_up_obj.pos_x, pick_up_obj.pos_y, 10, 10, 3);
+      if(pick_up_obj.tipo == 2){
+        ctx.fillStyle = "#00ff00";
+      } 
+      else if(pick_up_obj.tipo == 3){
+        ctx.fillStyle = "#ff0000";
+      } else if(pick_up_obj.tipo == 4){
+        ctx.fillStyle = "#0000ff";
+      } else if(pick_up_obj.tipo == 5){
+        ctx.fillStyle = "#ffff00";
+      }
+      
+      else {
+        ctx.fillStyle = pick_up_obj.color;
+      }
+
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      if(pick_up_obj.tipo == 2){
+        ctx.strokeStyle = "rgba(0,255,0,0.7)";
+      }else if(pick_up_obj.tipo == 3){
+        ctx.strokeStyle = "rgba(255,0,0,0.7)";
+      }else if(pick_up_obj.tipo == 4){
+        ctx.strokeStyle = "rgba(0,0,255,0.7)";
+      }else if(pick_up_obj.tipo == 5){
+        ctx.strokeStyle = "rgba(255,255,0,0.7)";
+      }
+      
+      else {
+        ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+
+
   }
+  
   
 }
 
 function render_weapon(){
   for (const [sid, jogador] of Object.entries(players)) {
-    if(jogador.pickup == 1){
-      ctx.fillStyle = '#000000';
-      ctx.save()
-      ctx.translate(jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2)
-      ctx.rotate(anguloEntreArmaEMouse(jogador.mouse_x,jogador.mouse_y,jogador.pos_x+jogador.size/2, jogador.pos_y+jogador.size/2))
-      ctx.fillRect(0, -30/2, 30, 10)
-      ctx.restore()
-    }
+    if(!jogador.alive) continue;
 
+    if(jogador.pickup == 1){
+      ctx.save();
+      ctx.translate(jogador.pos_x + jogador.size/2, jogador.pos_y + jogador.size/2);
+      ctx.rotate(anguloEntreArmaEMouse(jogador.mouse_x, jogador.mouse_y, jogador.pos_x + jogador.size/2, jogador.pos_y + jogador.size/2));
+
+      // sombra da arma
+      ctx.save();
+      ctx.translate(1, 2);
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "#000000";
+      roundRectPath(-4, -5, 34, 10, 2);
+      ctx.fill();
+      ctx.restore();
+
+      // cano (mais fino, se estende à frente)
+      const cano = ctx.createLinearGradient(0, -3, 0, 3);
+      cano.addColorStop(0, "#4a4a4a");
+      cano.addColorStop(0.5, "#2a2a2a");
+      cano.addColorStop(1, "#1a1a1a");
+      ctx.fillStyle = cano;
+      roundRectPath(10, -3, 22, 6, 2);
+      ctx.fill();
+
+      // ponta do cano (boca)
+      ctx.fillStyle = "#111111";
+      roundRectPath(29, -3.5, 4, 7, 1);
+      ctx.fill();
+
+      // corpo/slide da arma (parte de trás, mais grossa)
+      const corpo = ctx.createLinearGradient(0, -6, 0, 6);
+      corpo.addColorStop(0, "#5c5f66");
+      corpo.addColorStop(0.5, "#33363c");
+      corpo.addColorStop(1, "#1c1e22");
+      ctx.fillStyle = corpo;
+      roundRectPath(-6, -6, 20, 12, 3);
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(255,255,255,0.15)";
+      ctx.stroke();
+
+      // cabo (grip), angulado pra baixo
+      ctx.save();
+      ctx.translate(-4, 5);
+      ctx.rotate(0.35);
+      const cabo = ctx.createLinearGradient(0, 0, 0, 14);
+      cabo.addColorStop(0, "#3a3d42");
+      cabo.addColorStop(1, "#18191c");
+      ctx.fillStyle = cabo;
+      roundRectPath(-4, 0, 8, 14, 2);
+      ctx.fill();
+      ctx.restore();
+
+      // pequeno brilho no corpo pra dar volume
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      roundRectPath(-4, -5, 16, 2, 1);
+      ctx.fill();
+
+      ctx.restore();
+    }
+    else if(jogador.pickup == 4){
+      draw_bat(sid, jogador);
+    }else if(jogador.pickup == 100){
+      draw_kamehameha(sid, jogador);
+    }
+  }
+}
+
+function draw_bat(sid, jogador){
+  const centro_x = jogador.pos_x + jogador.size/2;
+  const centro_y = jogador.pos_y + jogador.size/2;
+
+  const swingInfo = swings[sid];
+  const agora = Date.now();
+  let anguloArma;
+  let emSwing = false;
+
+  if(swingInfo && (agora - swingInfo.startTime) < MELEE_SWING_DURATION_MS){
+    const progresso = (agora - swingInfo.startTime) / MELEE_SWING_DURATION_MS;
+    // ease-out: começa rápido e desacelera perto do fim, dá sensação de "impacto"
+    const progressoSuave = 1 - Math.pow(1 - progresso, 2);
+    anguloArma = swingInfo.angulo + (-MELEE_ARC_WIDTH/2 + progressoSuave * MELEE_ARC_WIDTH);
+    emSwing = true;
+  } else {
+    // parado, só acompanha o mouse como a pistola faz
+    anguloArma = anguloEntreArmaEMouse(jogador.mouse_x, jogador.mouse_y, centro_x, centro_y);
   }
 
+  // silhueta do taco: pontos (x, meia-largura) do cabo até a ponta grossa
+  const perfil = [
+    [-10, 5],   // botão do cabo
+    [0, 3.5],   // pega estreita
+    [18, 4],
+    [38, 6],
+    [58, 9],
+    [72, 11],   // início da parte grossa (barril)
+    [80, 11]    // ponta arredondada
+  ];
+
+  function tracarPerfilTaco(){
+    ctx.beginPath();
+    ctx.moveTo(perfil[0][0], -perfil[0][1]);
+    for(const [px, py] of perfil) ctx.lineTo(px, -py);
+    // ponta arredondada
+    ctx.arc(perfil[perfil.length-1][0], 0, perfil[perfil.length-1][1], -Math.PI/2, Math.PI/2);
+    for(let i = perfil.length - 1; i >= 0; i--) ctx.lineTo(perfil[i][0], perfil[i][1]);
+    // botão arredondado do cabo
+    ctx.arc(perfil[0][0], 0, perfil[0][1], Math.PI/2, -Math.PI/2);
+    ctx.closePath();
+  }
+
+  ctx.save();
+  ctx.translate(centro_x, centro_y);
+  ctx.rotate(anguloArma);
+
+  // sombra
+  ctx.save();
+  ctx.translate(2, 4);
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = "#000000";
+  tracarPerfilTaco();
+  ctx.fill();
+  ctx.restore();
+
+  // corpo de madeira do taco
+  const madeira = ctx.createLinearGradient(0, -11, 0, 11);
+  madeira.addColorStop(0, "#e0b578");
+  madeira.addColorStop(0.5, "#c1904f");
+  madeira.addColorStop(1, "#8a5a2e");
+  tracarPerfilTaco();
+  ctx.fillStyle = madeira;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.stroke();
+
+  // veios de madeira (linhas sutis ao longo do comprimento)
+  ctx.save();
+  tracarPerfilTaco();
+  ctx.clip();
+  ctx.strokeStyle = "rgba(0,0,0,0.12)";
+  ctx.lineWidth = 1;
+  [-6, -2, 2, 6].forEach((offset) => {
+    ctx.beginPath();
+    ctx.moveTo(-10, offset);
+    ctx.quadraticCurveTo(35, offset * 1.6, 80, offset * 2.1);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  // anel escuro perto da ponta (marca de fábrica)
+  ctx.strokeStyle = "rgba(0,0,0,0.3)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(66, -9.5);
+  ctx.lineTo(66, 9.5);
+  ctx.stroke();
+
+  // fita de grip enrolada no cabo
+  ctx.strokeStyle = "#2b2b2b";
+  ctx.lineWidth = 3;
+  for(let x = -9; x <= 14; x += 4){
+    ctx.beginPath();
+    ctx.moveTo(x, -4.2);
+    ctx.lineTo(x + 3, 4.2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // rastro em arco enquanto o golpe está acontecendo
+  if(emSwing){
+    ctx.save();
+    ctx.translate(centro_x, centro_y);
+    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = "#ffe9c7";
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(0, 0, 64, swingInfo.angulo - MELEE_ARC_WIDTH/2, anguloArma);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
+
+function atualizarStatusBotao(){
+  const btn = document.getElementById('btn-start');
+  const status = document.getElementById('status-jogo');
+  if(game_start && !end_game){
+    btn.style.display = 'none';
+    status.classList.add('ativo');
+  } else {
+    btn.style.display = '';
+    status.classList.remove('ativo');
+  }
+}
+
+function StartGame(){
+  game_start = true;
+  end_game = false;
+  winnerName = null;
+  atualizarStatusBotao();
+  socket.emit("start_game")
+}
+
+function draw_ammo_counter(){
+  const me = players[meuSid];
+  if(!me || !me.alive || me.pickup != 1) return;
+
+  const ammo = me.ammo ?? 0;
+  const text = `🔫 ${ammo}`;
+
+  ctx.save();
+  ctx.font = "bold 20px 'Segoe UI', system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+
+  const x = 16;
+  const y = canvas.height - 12;
+
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.strokeText(text, x, y);
+
+  ctx.fillStyle = ammo <= 3 ? "#e6564c" : "#ffffff";
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function draw_kill_feed(){
+  const now = Date.now();
+  killFeed = killFeed.filter(entry => now - entry.time < 5000);
+
+  ctx.save();
+  ctx.font = "bold 14px 'Segoe UI', system-ui, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+
+  killFeed.forEach((entry, i) => {
+    const age = now - entry.time;
+    const alpha = age > 4000 ? 1 - (age - 4000) / 1000 : 1;
+    const y = 16 + i * 26;
+    const x = canvas.width - 16;
+    const textWidth = ctx.measureText(entry.text).width;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    roundRectPath(x - textWidth - 12, y - 4, textWidth + 16, 22, 5);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(entry.text, x, y);
+  });
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function draw_kd(){
+  const me = players[meuSid];
+  if(!me) return;
+
+  const kills = me.kills ?? 0;
+  const deaths = me.death ?? 0;
+  const text = `K/D: ${kills}/${deaths}`;
+
+  ctx.save();
+  ctx.font = "bold 16px 'Segoe UI', system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+
+  const x = canvas.width / 2;
+  const y = canvas.height - 12;
+
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.strokeText(text, x, y);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function draw_melee_cooldown(){
+  const me = players[meuSid];
+  if(!me || !me.alive || me.pickup != 4) return;
+
+  const agora = Date.now();
+  const decorrido = agora - ultimoSwingTime;
+  const pctPronto = Math.min(1, decorrido / MELEE_COOLDOWN_MS);
+
+  const raio = 14;
+  const espessura = 4;
+  // ancorado ao lado direito do jogador, um pouco acima do centro
+  const x = me.pos_x + me.size + raio + 6;
+  const y = me.pos_y + me.size/2;
+
+  ctx.save();
+
+  ctx.beginPath();
+  ctx.arc(x, y, raio, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x, y, raio - espessura/2 - 1, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.lineWidth = espessura;
+  ctx.stroke();
+
+  const anguloFinal = -Math.PI/2 + pctPronto * Math.PI * 2;
+  ctx.beginPath();
+  ctx.arc(x, y, raio - espessura/2 - 1, -Math.PI/2, anguloFinal);
+  ctx.strokeStyle = pctPronto >= 1 ? "#5ddc6b" : "#ffcf5c";
+  ctx.lineWidth = espessura;
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  if(pctPronto < 1){
+    const segsRestantes = Math.ceil((MELEE_COOLDOWN_MS - decorrido) / 1000);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px 'Segoe UI', system-ui, sans-serif";
+    ctx.fillText(segsRestantes, x, y);
+  } else {
+    ctx.strokeStyle = "#5ddc6b";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x - 4, y);
+    ctx.lineTo(x - 1, y + 4);
+    ctx.lineTo(x + 5, y - 4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function Respawn()
+{
+  socket.emit("respawn")
+}
+
+
+
 function render_bullet(){
   for (const [id, bullet] of Object.entries(bullets)) {
     if(bullet.alive){
-      ctx.fillStyle = '#FF0000';
       ctx.save()
       ctx.translate(bullet.pos_x, bullet.pos_y)
       ctx.rotate(bullet.angulo)
-      ctx.fillRect(0, -5, 10, 10)
+
+      // rastro
+      const trail = ctx.createLinearGradient(-14, 0, 0, 0);
+      trail.addColorStop(0, "rgba(255,140,60,0)");
+      trail.addColorStop(1, "rgba(255,140,60,0.6)");
+      ctx.fillStyle = trail;
+      ctx.fillRect(-14, -2.5, 14, 5);
+
+      // corpo da bala
+      roundRectPath(0, -5, 10, 10, 3);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fill();
       ctx.restore()
     }
 
@@ -175,16 +1099,133 @@ function send_mouse(){
   socket.emit('send_mouse',{'mouse_x':mouse.x,'mouse_y':mouse.y})
 }
 
-function loop() {
+function draw_kamehameha(sid, jogador){
+  const info = kamehamehas[sid];
+  if(!info) return;
+  const agora = Date.now();
+  const decorrido = agora - info.startTime;
+  if(decorrido > KAMEHAMEHA_DURATION_MS) { delete kamehamehas[sid]; return; }
+
+  const progresso = decorrido / KAMEHAMEHA_DURATION_MS;
+  const alpha = progresso < 0.1 ? progresso/0.1 : (progresso > 0.85 ? 1 - (progresso-0.85)/0.15 : 1);
+
+  const comprimento = Math.max(canvas.width, canvas.height) * 1.6;
+  const larguraBase = 110;
+  const larguraPonta = 60;
+
+  const centro_x = jogador.pos_x + jogador.size/2;
+  const centro_y = jogador.pos_y + jogador.size/2;
+
+  ctx.save();
+  ctx.translate(centro_x, centro_y);
+  ctx.rotate(info.angulo);
+  ctx.globalAlpha = alpha;
+
+  // glow externo, mais largo e translúcido, pra dar sensação de escala
+  const glow = ctx.createLinearGradient(0, 0, comprimento, 0);
+  glow.addColorStop(0, "rgba(191,233,255,0.55)");
+  glow.addColorStop(0.5, "rgba(79,184,255,0.35)");
+  glow.addColorStop(1, "rgba(79,184,255,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.moveTo(20, -larguraBase);
+  ctx.lineTo(comprimento, -larguraPonta * 1.8);
+  ctx.lineTo(comprimento, larguraPonta * 1.8);
+  ctx.lineTo(20, larguraBase);
+  ctx.closePath();
+  ctx.fill();
+
+  // núcleo do feixe
+  const nucleo = ctx.createLinearGradient(0, 0, comprimento, 0);
+  nucleo.addColorStop(0, "#ffffff");
+  nucleo.addColorStop(0.15, "#bfe9ff");
+  nucleo.addColorStop(0.6, "#4fb8ff");
+  nucleo.addColorStop(1, "rgba(79,184,255,0)");
+  ctx.fillStyle = nucleo;
+
+  ctx.beginPath();
+  ctx.moveTo(20, -larguraBase/2);
+  ctx.lineTo(comprimento, -larguraPonta/2);
+  ctx.lineTo(comprimento, larguraPonta/2);
+  ctx.lineTo(20, larguraBase/2);
+  ctx.closePath();
+  ctx.fill();
+
+  // esfera de origem, também maior
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(20, 0, larguraBase/2, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function draw_saiyan_hair(jogador){
+  const cx = jogador.pos_x + jogador.size/2;
+  const topo = jogador.pos_y;
+
+  ctx.save();
+  ctx.fillStyle = "#ffe066";
+  ctx.strokeStyle = "rgba(180,140,0,0.6)";
+  ctx.lineWidth = 1;
+
+  const picos = [
+    [-16, 6, -30, -18],
+    [-6, 2, -8, -30],
+    [4, 2, 10, -32],
+    [14, 4, 28, -16],
+    [0, 4, 0, -22]
+  ];
+
+  for(const [baseX1, baseX2, pontaX, pontaY] of picos){
+    ctx.beginPath();
+    ctx.moveTo(cx + baseX1, topo + baseX2);
+    ctx.lineTo(cx + pontaX, topo + pontaY);
+    ctx.lineTo(cx + baseX1 + 10, topo + baseX2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function loop(timestamp) {
+  requestAnimationFrame(loop);
+
+  const delta = timestamp - ultimoFrameTime;
+  if (delta < INTERVALO_MS) return;
+  ultimoFrameTime = timestamp - (delta % INTERVALO_MS);
+
   updatePlayer();
-  draw_rect();
+  updateParticles(delta);
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const shake = getShakeOffset();
+  ctx.save();
+  ctx.translate(shake.x, shake.y);
+
+  draw_rect();         // fundo + jogadores primeiro
   draw_pickup_obj();
   render_weapon();
   render_bullet();
+  draw_particles();
+
+  ctx.restore();
+
+  draw_map_tile();
+  draw_kill_feed();
+  draw_kd();
+  draw_scoreboard();
+  draw_ammo_counter();
+  draw_melee_cooldown();
+  draw_multikill_card();
+  draw_vignette();
+  draw_end_game_screen();
   send_mouse();
-  draw_map_tile()
-  requestAnimationFrame(loop);
-  
 }
 
 //listners de socket
@@ -194,22 +1235,67 @@ const socket = io();
 socket.on('connect', () => {
   meuSid = socket.id
 })
-loop();
+requestAnimationFrame(loop);
+
+socket.on('update_game_state', (data) => {
+
+  game_start = data.game_start;
+  atualizarStatusBotao();
+});
 
 socket.on('update_player_pos', (data) => {
-  players = data.jogadores;
+  const novosJogadores = data.jogadores;
 
+  for (const [sid, jogador] of Object.entries(novosJogadores)) {
+    const antigoHp = hpAnterior[sid];
+
+    if (antigoHp !== undefined) {
+      if (jogador.hp < antigoHp && jogador.hp > 0) {
+        sons.dano();
+        spawnParticles(jogador.pos_x + jogador.size/2, jogador.pos_y + jogador.size/2, "#ff5544", 10);
+        if (sid === meuSid) triggerShake(6, 150);
+      }
+      if (antigoHp > 0 && jogador.hp <= 0) {
+        sons.morte();
+        const anterior = players[sid] || {};
+        const px = anterior.pos_x ?? jogador.pos_x ?? 0;
+        const py = anterior.pos_y ?? jogador.pos_y ?? 0;
+        spawnParticles(px + 20, py + 20, "#ffcc55", 28, {speed:6, life:700, size:5});
+        if (sid === meuSid) triggerShake(16, 300);
+      }
+    }
+    hpAnterior[sid] = jogador.hp;
+
+    const antigoKillstreak = killstreakAnterior[sid];
+    if (antigoKillstreak !== undefined && jogador.kill_streak > antigoKillstreak) {
+      const label = streakLabels[jogador.kill_streak] || (jogador.kill_streak > 5 ? "Monster Kill" : null);
+      if (label) {
+        falar(label);
+        multiKillCard = { text: `${getDisplayName(sid, jogador)}: ${label}`, time: Date.now() };
+      }
+    }
+    killstreakAnterior[sid] = jogador.kill_streak;
+
+  }
+
+  players = novosJogadores;
 });
 
 socket.on('spawn_pickup', (data) => {
-  const pickup = data
-  pick_up_obj.x = pickup.pos_x
-  pick_up_obj.y = pickup.pos_y
+  pickups = data.pickups
 })
 
+socket.on('melee_swing', (data) => {
+  swings[data.sid] = { startTime: Date.now(), angulo: data.angulo };
+});
+
+socket.on('kamehameha_fire', (data) => {
+  kamehamehas[data.sid] = { startTime: Date.now(), angulo: data.angulo };
+});
 socket.on('pickup_dispawn', (data) => {
   pick_up_obj = data.pickup
   console.log('Objeto dispawnou')
+  sons.pickup()
 })
 
 socket.on('spawn_bullets', (data) => {
@@ -219,6 +1305,27 @@ socket.on('spawn_bullets', (data) => {
 socket.on('recebe_mapa', (data) => {
   mapa = data.paredes
 })
+socket.on('end_game', () => {
+  end_game = true;
+  game_start = false;
+  atualizarStatusBotao();
+  let melhor = null;
+  for(const [sid, jogador] of Object.entries(players)){
+    if(!melhor || (jogador.kills ?? 0) > (melhor.kills ?? 0)){
+      melhor = jogador;
+      winnerName = getDisplayName(sid, jogador);
+    }
+  }
+});
+socket.on('kill_feed', (data) => {
+  killFeed.push({
+    text: `${data.killer_name} matou ${data.victim_name}`,
+    time: Date.now()
+  });
+  if(killFeed.length > 5){
+    killFeed.shift();
+  }
+});
 
 
 </script>
